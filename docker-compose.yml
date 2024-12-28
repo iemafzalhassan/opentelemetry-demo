@@ -1,0 +1,296 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+x-default-logging: &logging
+  driver: "json-file"
+  options:
+    max-size: "5m"
+    max-file: "2"
+    tag: "{{.Name}}"
+
+networks:
+  default:
+    name: opentelemetry-demo
+    driver: bridge
+
+services:
+  # Core Services
+  frontend:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-frontend
+    container_name: frontend
+    build:
+      context: ./
+      dockerfile: ${FRONTEND_DOCKERFILE}
+    deploy:
+      resources:
+        limits:
+          memory: 250M
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT}"
+    environment:
+      - PORT=${FRONTEND_PORT}
+      - FRONTEND_ADDR
+      - CART_ADDR
+      - CHECKOUT_SERVICE_ADDR
+      - CURRENCY_ADDR
+      - PRODUCT_CATALOG_SERVICE_ADDR
+      - SHIPPING_ADDR=shipping:50051
+      - OTEL_SERVICE_NAME=frontend
+      - IMAGE_PROVIDER_HOST
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    depends_on:
+      cart:
+        condition: service_started
+      checkoutservice:
+        condition: service_started
+      productcatalogservice:
+        condition: service_started
+      shipping:
+        condition: service_started
+      image-provider:
+        condition: service_started
+    logging: *logging
+
+  frontendproxy:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-frontendproxy
+    container_name: frontend-proxy
+    build:
+      context: ./
+      dockerfile: ${FRONTEND_PROXY_DOCKERFILE}
+    deploy:
+      resources:
+        limits:
+          memory: 50M
+    restart: unless-stopped
+    ports:
+      - "${ENVOY_PORT}:${ENVOY_PORT}"
+    environment:
+      - ENVOY_PORT=8080
+      - FRONTEND_HOST=frontend
+      - FRONTEND_PORT=8080
+      - IMAGE_PROVIDER_HOST=image-provider
+      - IMAGE_PROVIDER_PORT=8081
+      - OTEL_COLLECTOR_HOST=otel-collector
+      - OTEL_COLLECTOR_PORT_GRPC=4317
+      - OTEL_COLLECTOR_PORT_HTTP=4318
+      - OTEL_SERVICE_NAME=frontend-proxy
+    depends_on:
+      frontend:
+        condition: service_started
+      opentelemetry_collector:
+        condition: service_started
+    logging: *logging
+
+  cart:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-cart
+    container_name: cart-service
+    build:
+      context: ./
+      dockerfile: ${CART_DOCKERFILE}
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+    restart: unless-stopped
+    ports:
+      - "${CART_PORT}"
+    environment:
+      - CART_PORT
+      - OTEL_SERVICE_NAME=cart
+      - ASPNETCORE_URLS=http://*:${CART_PORT}
+      - VALKEY_ADDR=valkey:6379
+    logging: *logging
+    depends_on:
+      redis:
+        condition: service_started
+
+  checkoutservice:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-checkoutservice
+    container_name: checkout-service
+    build:
+      context: ./
+      dockerfile: ${CHECKOUT_SERVICE_DOCKERFILE}
+    deploy:
+      resources:
+        limits:
+          memory: 20M
+    restart: unless-stopped
+    ports:
+      - "${CHECKOUT_SERVICE_PORT}"
+    environment:
+      - CHECKOUT_SERVICE_PORT
+      - CART_ADDR
+      - CURRENCY_ADDR
+      - EMAIL_ADDR
+      - PAYMENT_ADDR
+      - PRODUCT_CATALOG_SERVICE_ADDR
+      - SHIPPING_ADDR=shipping:50051
+      - OTEL_SERVICE_NAME=checkoutservice
+    depends_on:
+      cart:
+        condition: service_started
+      email:
+        condition: service_started
+      payment:
+        condition: service_started
+      productcatalogservice:
+        condition: service_started
+      shipping:
+        condition: service_started
+    logging: *logging
+
+  currency:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-currency
+    container_name: currency-service
+    build:
+      context: ./
+      dockerfile: ${CURRENCY_DOCKERFILE}
+      args:
+        OPENTELEMETRY_CPP_VERSION: ${OPENTELEMETRY_CPP_VERSION}
+    deploy:
+      resources:
+        limits:
+          memory: 20M
+    restart: unless-stopped
+    ports:
+      - "${CURRENCY_PORT}"
+    environment:
+      - CURRENCY_PORT
+      - VERSION=${IMAGE_VERSION}
+      - OTEL_SERVICE_NAME=currency
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    logging: *logging
+
+  email:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-email
+    container_name: email-service
+    build:
+      context: ./
+      dockerfile: ${EMAIL_DOCKERFILE}
+    deploy:
+      resources:
+        limits:
+          memory: 100M
+    restart: unless-stopped
+    ports:
+      - "${EMAIL_PORT}"
+    environment:
+      - APP_ENV=production
+      - EMAIL_PORT
+      - OTEL_SERVICE_NAME=email
+    logging: *logging
+
+  image-provider:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-image-provider
+    container_name: image-provider
+    build:
+      context: ./
+      dockerfile: ${IMAGE_PROVIDER_DOCKERFILE}
+    deploy:
+      resources:
+        limits:
+          memory: 120M
+    restart: unless-stopped
+    ports:
+      - "${IMAGE_PROVIDER_PORT}"
+    environment:
+      - IMAGE_PROVIDER_PORT
+      - OTEL_SERVICE_NAME=image-provider
+    logging: *logging
+
+  payment:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-payment
+    container_name: payment-service
+    build:
+      context: ./
+      dockerfile: ${PAYMENT_DOCKERFILE}
+    deploy:
+      resources:
+        limits:
+          memory: 120M
+    restart: unless-stopped
+    ports:
+      - "${PAYMENT_PORT}"
+    environment:
+      - PAYMENT_PORT
+      - OTEL_SERVICE_NAME=payment
+    logging: *logging
+
+  productcatalogservice:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-productcatalogservice
+    container_name: product-catalog-service
+    build:
+      context: ./
+      dockerfile: ${PRODUCT_CATALOG_DOCKERFILE}
+    deploy:
+      resources:
+        limits:
+          memory: 20M
+    restart: unless-stopped
+    ports:
+      - "${PRODUCT_CATALOG_SERVICE_PORT}"
+    environment:
+      - PRODUCT_CATALOG_SERVICE_PORT
+      - OTEL_SERVICE_NAME=productcatalogservice
+    logging: *logging
+
+  shipping:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-shipping
+    container_name: shipping
+    build:
+      context: ./
+      dockerfile: ${SHIPPING_DOCKERFILE}
+    ports:
+      - "50051:50051"
+    environment:
+      - SHIPPING_PORT=50051
+      - OTEL_SERVICE_NAME=shipping
+      - QUOTE_ADDR=http://quote:8090
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    depends_on:
+      quote:
+        condition: service_started
+      opentelemetry_collector:
+        condition: service_started
+    logging: *logging
+
+  opentelemetry_collector:
+    image: otel/opentelemetry-collector:latest
+    container_name: otel-collector
+    ports:
+      - "4317:4317"  # GRPC
+      - "4318:4318"  # HTTP
+    environment:
+      - OTEL_COLLECTOR_HOST=otel-collector
+      - OTEL_COLLECTOR_PORT_GRPC=4317
+      - OTEL_COLLECTOR_PORT_HTTP=4318
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    command: ["--config=/etc/otel-collector-config.yaml"]
+
+  redis:
+    image: redis:alpine
+    container_name: valkey
+    ports:
+      - "6379:6379"
+
+  quote:
+    image: ${IMAGE_NAME}:${DEMO_VERSION}-quote
+    container_name: quote
+    build:
+      context: ./
+      dockerfile: ${QUOTE_DOCKERFILE}
+    ports:
+      - "${QUOTE_PORT}:${QUOTE_PORT}"
+    environment:
+      - QUOTE_PORT=8090
+      - OTEL_SERVICE_NAME=quote
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_TRACES_SAMPLER=always_on
+      - OTEL_METRICS_EXPORTER=otlp
+      - OTEL_LOGS_EXPORTER=otlp
+    logging: *logging
+    depends_on:
+      opentelemetry_collector:
+        condition: service_started
